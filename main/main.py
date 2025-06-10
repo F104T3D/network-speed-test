@@ -2,6 +2,7 @@ import socket
 import time
 import requests
 import logging
+import concurrent.futures
 
 LOG_FILE = "speedtest.log"
 
@@ -14,6 +15,9 @@ logging.basicConfig(
     ]
 )
 
+def log(msg):
+    logging.info(msg)
+
 def ping_test(host="1.1.1.1", port=443, timeout=2):
     try:
         start = time.time()
@@ -23,47 +27,67 @@ def ping_test(host="1.1.1.1", port=443, timeout=2):
         end = time.time()
         s.close()
         latency = (end - start) * 1000
-        print(f"Ping: {latency:.2f} ms")
+        log(f"Ping: {latency:.2f} ms")
         return latency
     except Exception as e:
-        print(f"Ping failed: {e}")
+        log(f"Ping failed: {e}")
         return None
 
-def download_test(url="http://ipv4.download.thinkbroadband.com/10MB.zip"):
+def download_worker(url):
     try:
-        start = time.time()
-        r = requests.get(url, stream=True)
+        r = requests.get(url, stream=True, timeout=10)
         total_bytes = 0
-        for chunk in r.iter_content(1024 * 1024):
+        for chunk in r.iter_content(1024 * 1024):  # 1MB
             total_bytes += len(chunk)
-        end = time.time()
-        duration = end - start
-        speed_mbps = (total_bytes * 8) / (duration * 1024 * 1024)
-        print(f"Download speed: {speed_mbps:.2f} Mbps")
-        return speed_mbps
+        return total_bytes
     except Exception as e:
-        print(f"Download failed: {e}")
-        return None
+        log(f"Download thread error: {e}")
+        return 0
 
-def upload_test(url="https://httpbin.org/post", data_size_mb=5):
-    try:
-        data = b'x' * (data_size_mb * 1024 * 1024)
-        start = time.time()
-        r = requests.post(url, data=data)
-        end = time.time()
-        duration = end - start
-        speed_mbps = (len(data) * 8) / (duration * 1024 * 1024)
-        print(f"Upload speed: {speed_mbps:.2f} Mbps")
-        return speed_mbps
-    except Exception as e:
-        print(f"Upload failed: {e}")
-        return None
+def download_test(url="http://ipv4.download.thinkbroadband.com/100MB.zip", threads=4):
+    log(f"Running download test with {threads} threads...")
+    start = time.time()
+    total_bytes = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = [executor.submit(download_worker, url) for _ in range(threads)]
+        for future in concurrent.futures.as_completed(futures):
+            total_bytes += future.result()
+    end = time.time()
+    duration = end - start
+    speed_mbps = (total_bytes * 8) / (duration * 1024 * 1024)
+    log(f"Download speed: {speed_mbps:.2f} Mbps")
+    return speed_mbps
+
+def upload_test(url="https://httpbin.org/post", data_size_mb=10, threads=4):
+    log(f"Running upload test with {threads} threads...")
+    data = b'x' * (data_size_mb * 1024 * 1024)
+    start = time.time()
+
+    def upload_worker():
+        try:
+            r = requests.post(url, data=data, timeout=10)
+            return len(data)
+        except Exception as e:
+            log(f"Upload thread error: {e}")
+            return 0
+
+    total_bytes = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = [executor.submit(upload_worker) for _ in range(threads)]
+        for future in concurrent.futures.as_completed(futures):
+            total_bytes += future.result()
+    end = time.time()
+    duration = end - start
+    speed_mbps = (total_bytes * 8) / (duration * 1024 * 1024)
+    log(f"Upload speed: {speed_mbps:.2f} Mbps")
+    return speed_mbps
 
 def main():
+    log("=== Starting Speed Test ===")
     ping_test()
     download_test()
     upload_test()
-    print("Completed")
+    log("=== Speed Test Completed ===")
 
 if __name__ == "__main__":
     main()
