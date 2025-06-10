@@ -1,4 +1,4 @@
-# Python Network Speed Tester
+# Python Network Speed Test
 
 A simple Python script to test your internet connection speed.  
 It measures:
